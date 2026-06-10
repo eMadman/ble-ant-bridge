@@ -69,7 +69,7 @@ Garmin sees the SmartSpin2k as a full controllable smart trainer.
 - [x] Verify: Garmin shows ERG target-power UI and sends control command ✅
       (bridge correctly ignores it — RX handler not yet wired; Phase B)
 
-### FE-C Phase B: Garmin → Trainer Control (ERG) ⬜
+### FE-C Phase B: Garmin → Trainer Control (ERG) 🔧 (in progress 2026-06-10)
 
 **What this enables on Garmin:**
 - ERG mode (Garmin sets target wattage → SmartSpin2k adjusts resistance)
@@ -95,16 +95,17 @@ Garmin sees the SmartSpin2k as a full controllable smart trainer.
 > resistance (48) and simulation (51) follow once the write path is proven.
 
 **Phase B implementation tasks (ERG first):**
-- [ ] FE-C RX in `AntFec::service()`: handle EVENT_RX / acknowledged Page 49
-      (Target Power, 0.25 W units → W = val/4); reply Page 71 (Command Status)
-- [ ] `bridge_core` reverse channel: guarded `ControlCommand` (target power W +
-      pending flag), set by ANT RX, consumed by the BLE write path (both in loop())
-- [ ] BLE FTMS write path: discover FTMS 0x1826 + Control Point 0x2AD9
-      (write + indicate) in `connectCallback`; Request Control (0x00) handshake;
-      write SetTargetPower (0x05, uint16 W) on each new target
-- [ ] Wire ERG end to end: Garmin ERG workout → SmartSpin2k target power
-- [ ] Then: basic resistance (48→0x04) + simulation (51→0x11); set the matching
-      capability bits in Page 54
+- [x] FE-C RX in `AntFec::service()`: handle EVENT_RX; parse Page 49 (ERG,
+      0.25 W units → W = val/4), Page 48 (resistance), Page 51 (simulation);
+      reply Page 71 (Command Status) on next broadcast slot
+- [x] `bridge_core` reverse channel: `ControlCommand` (mode + target values +
+      pending flag), `bridgeSetControl()` / `bridgeConsumeControl()`, critical-section guarded
+- [x] BLE FTMS write path: `ftms` / `ftmsCP` client objects; discover 0x1826 +
+      0x2AD9 in `connectCallback`; enable indications; Request Control (0x00);
+      `serviceControl()` in loop() writes 0x05 / 0x04 / 0x11 on each new command
+- [x] Page 54 capabilities updated: advertise all three modes (bits 0+1+2)
+- [ ] Verify ERG end to end: Garmin ERG workout → SmartSpin2k target power
+- [ ] Verify basic resistance (48→0x04) and simulation (51→0x11)
 - [ ] FE state machine (Ready, In Use, Finished, Paused)
 - [ ] (Stretch) calibration flow (SpinDown via FE-C ↔ FTMS SpinDownControl)
 - [ ] (Stretch) parse FTMS Indoor Bike Data 0x2AD2 for full data set / real speed

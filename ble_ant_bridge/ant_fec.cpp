@@ -31,11 +31,21 @@ static uint8_t  bgIndex      = 0;    // background page cursor: 0→54, 1→80, 
 static uint32_t deviceSerial = 0;    // full DEVICEID[0] — page 81 serial number
 static uint32_t startMs      = 0;    // for page 16 elapsed time (0.25 s units)
 
+// Phase B: last received control command state for page 71 (Command Status).
+// cmdResponsePending is set by handleControlPage() and cleared by loadNextBroadcast()
+// after it inserts page 71 into the broadcast stream.
+static bool    cmdResponsePending = false;
+static uint8_t lastCmdPage        = 0xFF;  // page number of last received control page
+static uint8_t lastCmdStatus      = 0x02;  // 0=Pass, 1=Fail, 2=NotSupported
+static uint8_t lastCmdData[4]     = { 0xFF, 0xFF, 0xFF, 0xFF };  // echoed in page 71
+
 static void buildPageGeneralFE(uint8_t* buf, const BridgeData& d, bool stale);
 static void buildPageTrainer(uint8_t* buf, const BridgeData& d, bool stale);
 static void buildPageCapabilities(uint8_t* buf);
 static void buildPageManufacturer(uint8_t* buf);
 static void buildPageProduct(uint8_t* buf);
+static void buildPageCommandStatus(uint8_t* buf);
+static void handleControlPage(const uint8_t* data);
 static uint32_t loadNextBroadcast();
 
 bool AntFec::begin() {
@@ -95,12 +105,18 @@ void AntFec::service() {
     static uint32_t txCount    = 0;
     static uint32_t lastLogTxN = 0;
 
-    // Drain every queued ANT event; only our channel's EVENT_TX loads a new payload.
-    // (Phase B will also branch on EVENT_RX / acknowledged control pages here.)
+    // Drain every queued ANT event on our channel.
+    // EVENT_TX  → load next broadcast payload.
+    // EVENT_RX  → parse Garmin's acknowledged control page (48/49/51); sets
+    //             cmdResponsePending so loadNextBroadcast() inserts page 71.
     while (sd_ant_event_get(&channel, &eventCode, msgBuf) == NRF_SUCCESS) {
-        if (channel == ANT_FEC_CHANNEL_NUMBER && eventCode == EVENT_TX) {
-            loadNextBroadcast();
-            txCount++;
+        if (channel == ANT_FEC_CHANNEL_NUMBER) {
+            if (eventCode == EVENT_TX) {
+                loadNextBroadcast();
+                txCount++;
+            } else if (eventCode == EVENT_RX) {
+                handleControlPage(msgBuf + MESG_DATA_OFFSET);   // payload starts at byte 3
+            }
         }
     }
 
@@ -124,7 +140,12 @@ static uint32_t loadNextBroadcast() {
     BridgeData d = bridgeSnapshot();
     bool stale = !d.valid || ((millis() - d.lastUpdateMs) > STALE_DATA_TIMEOUT_MS);
 
-    if (msgCounter % ANT_FEC_BACKGROUND_INTERVAL == 0) {
+    // Page 71 (Command Status) takes priority over the normal background rotation
+    // so Garmin's ERG UI gets prompt acknowledgement of each control command.
+    if (cmdResponsePending) {
+        buildPageCommandStatus(payload);
+        cmdResponsePending = false;
+    } else if (msgCounter % ANT_FEC_BACKGROUND_INTERVAL == 0) {
         switch (bgIndex) {
             case 0:  buildPageCapabilities(payload); break;   // page 54
             case 1:  buildPageManufacturer(payload); break;   // page 80 (0x50)
@@ -189,9 +210,7 @@ static void buildPageTrainer(uint8_t* buf, const BridgeData& d, bool stale) {
     buf[7] = (uint8_t)(feState << 4);
 }
 
-// Page 54 (0x36) — FE Capabilities. Advertises which control modes the trainer
-// accepts. Phase A: ERG (target power) only; resistance + simulation come with
-// the Phase B control path.
+// Page 54 (0x36) — FE Capabilities. Phase B advertises all three control modes.
 static void buildPageCapabilities(uint8_t* buf) {
     buf[0] = ANT_FEC_PAGE_CAPABILITIES;        // 0x36
     buf[1] = 0xFF;                             // reserved
@@ -200,7 +219,7 @@ static void buildPageCapabilities(uint8_t* buf) {
     buf[4] = 0xFF;                             // reserved
     buf[5] = 0xFF;                             // max resistance LSB — N/A
     buf[6] = 0xFF;                             // max resistance MSB — N/A (0xFFFF)
-    buf[7] = FEC_CAP_TARGET_POWER;             // capabilities: ERG only for now
+    buf[7] = FEC_CAP_BASIC_RESISTANCE | FEC_CAP_TARGET_POWER | FEC_CAP_SIMULATION;
 }
 
 // Common Page 80 (0x50) — Manufacturer's Information.
@@ -225,4 +244,74 @@ static void buildPageProduct(uint8_t* buf) {
     buf[5] = (uint8_t)(deviceSerial >> 8);
     buf[6] = (uint8_t)(deviceSerial >> 16);
     buf[7] = (uint8_t)(deviceSerial >> 24);    // serial number MSB
+}
+
+// Page 71 (0x47) — Command Status. TX response echoing the last received control
+// page so Garmin's ERG UI can confirm the command was accepted.
+static void buildPageCommandStatus(uint8_t* buf) {
+    buf[0] = ANT_FEC_PAGE_COMMAND_STATUS;  // 0x47
+    buf[1] = lastCmdPage;                  // page number of last received control page
+    buf[2] = 0xFF;                         // sequence number — N/A for FE-C masters
+    buf[3] = lastCmdStatus;               // 0=Pass, 1=Fail, 2=NotSupported
+    buf[4] = lastCmdData[0];
+    buf[5] = lastCmdData[1];
+    buf[6] = lastCmdData[2];
+    buf[7] = lastCmdData[3];
+}
+
+// Parse a control page received from Garmin (EVENT_RX). Extracts the target
+// value, publishes it to bridge_core, and primes a page-71 response broadcast.
+// data[0] is the ANT+ page number; units follow the FE-C Device Profile spec.
+static void handleControlPage(const uint8_t* data) {
+    ControlCommand cmd = {};
+
+    switch (data[0]) {
+        case ANT_FEC_PAGE_TARGET_POWER: {    // 0x31 — ERG: 0.25 W units, bytes 6-7
+            uint16_t raw  = (uint16_t)(data[6] | ((uint16_t)data[7] << 8));
+            cmd.mode         = ControlMode::ERG;
+            cmd.targetPowerW = raw / 4;      // 0.25 W resolution → W
+            lastCmdPage      = data[0];
+            lastCmdStatus    = 0x00;         // Pass
+            lastCmdData[0]   = 0xFF;
+            lastCmdData[1]   = 0xFF;
+            lastCmdData[2]   = data[6];      // echo raw target power
+            lastCmdData[3]   = data[7];
+            bridgeSetControl(cmd);
+            cmdResponsePending = true;
+            Serial.printf("[ANT] Page 49 ERG target: %u W\n", cmd.targetPowerW);
+            break;
+        }
+        case ANT_FEC_PAGE_BASIC_RESISTANCE: {  // 0x30 — byte 7: 0.5% units (0-200=0-100%)
+            cmd.mode          = ControlMode::RESISTANCE;
+            cmd.resistancePct = data[7] / 2;  // 0.5% units → 0-100%
+            lastCmdPage       = data[0];
+            lastCmdStatus     = 0x00;
+            lastCmdData[0]    = 0xFF; lastCmdData[1] = 0xFF; lastCmdData[2] = 0xFF;
+            lastCmdData[3]    = data[7];
+            bridgeSetControl(cmd);
+            cmdResponsePending = true;
+            Serial.printf("[ANT] Page 48 resistance: %u%%\n", cmd.resistancePct);
+            break;
+        }
+        case ANT_FEC_PAGE_TRACK_RESISTANCE: {  // 0x33 — simulation: wind + grade + Cr + CwA
+            cmd.mode                  = ControlMode::SIMULATION;
+            cmd.sim.windSpeedMms      = (int16_t)(data[1] | ((uint16_t)data[2] << 8));
+            cmd.sim.gradeHundredths   = (int16_t)(data[3] | ((uint16_t)data[4] << 8));
+            cmd.sim.crCoeff           = data[5];
+            cmd.sim.cwaCoeff          = data[6];
+            lastCmdPage               = data[0];
+            lastCmdStatus             = 0x00;
+            lastCmdData[0]            = data[3];  // echo grade LSB/MSB + coefficients
+            lastCmdData[1]            = data[4];
+            lastCmdData[2]            = data[5];
+            lastCmdData[3]            = data[6];
+            bridgeSetControl(cmd);
+            cmdResponsePending = true;
+            Serial.printf("[ANT] Page 51 simulation: grade=%.2f%%\n",
+                          cmd.sim.gradeHundredths * 0.01f);
+            break;
+        }
+        default:
+            break;   // unknown page — ignore silently
+    }
 }

@@ -1,15 +1,20 @@
 #pragma once
 /*
- * bridge_core.h — the translation seam between the two FreeRTOS tasks.
+ * bridge_core.h — the translation seam between the FreeRTOS tasks.
  *
- * The BLE notify callback (Bluefruit task) publishes parsed CPS data via
- * bridgeUpdateFromCps(); the ANT+ TX path (Arduino loop() task) reads a
- * consistent copy via bridgeSnapshot(). The single backing struct is guarded
- * by a short FreeRTOS critical section, so the two tasks never observe a
- * half-written value.
+ * CPS data path (Phase A): BLE notify callback → bridgeUpdateFromCps()
+ * → shared BridgeData → ANT+ TX reads via bridgeSnapshot().
+ *
+ * Control data path (Phase B): ANT+ RX handler (loop() task) →
+ * bridgeSetControl() → shared ControlCommand → BLE write path consumes
+ * via bridgeConsumeControl() (also loop() task). Both sides run in the
+ * same task, but the critical section is kept for consistency with
+ * BridgeData and to guard against any future task topology change.
  */
 
 #include <stdint.h>
+
+// ── CPS → ANT+ TX ────────────────────────────────────────────────────
 
 struct BridgeData {
     int16_t  instantaneousPower;   // Watts (sint16, from CPS 0x2A63)
@@ -24,3 +29,34 @@ void bridgeUpdateFromCps(int16_t power, uint16_t cadence);
 
 // Return a consistent snapshot for the ANT+ TX path. Called from loop().
 BridgeData bridgeSnapshot();
+
+// ── Garmin → SmartSpin2k control (Phase B) ───────────────────────────
+
+enum class ControlMode : uint8_t {
+    NONE       = 0,
+    ERG        = 1,   // target power in Watts
+    RESISTANCE = 2,   // resistance level (0-100)
+    SIMULATION = 3,   // wind/grade simulation parameters
+};
+
+struct SimParams {
+    int16_t  windSpeedMms;     // 0.001 m/s units (ANT+ page 51 bytes 1-2)
+    int16_t  gradeHundredths;  // 0.01% units (bytes 3-4)
+    uint8_t  crCoeff;          // 5×10^-5 units (byte 5)
+    uint8_t  cwaCoeff;         // 0.01 kg/m units (byte 6)
+};
+
+struct ControlCommand {
+    ControlMode mode;
+    bool        pending;
+    uint16_t    targetPowerW;   // ERG mode
+    uint8_t     resistancePct;  // RESISTANCE mode (0-100)
+    SimParams   sim;            // SIMULATION mode
+};
+
+// Set the pending control command. Called from ANT+ RX handler (loop() task).
+void bridgeSetControl(const ControlCommand& cmd);
+
+// Atomically read and clear the pending command. Returns true if a command
+// was waiting. Called from the BLE write path (loop() task).
+bool bridgeConsumeControl(ControlCommand* out);

@@ -10,7 +10,8 @@
 #include "bridge_core.h"
 #include <Arduino.h>   // millis() + FreeRTOS critical-section macros (nRF52 core)
 
-static BridgeData gData = { 0, 0xFF, 0, false };
+static BridgeData    gData    = { 0, 0xFF, 0, false };
+static ControlCommand gControl = { ControlMode::NONE, false, 0, 0, { 0, 0, 0, 0 } };
 
 void bridgeUpdateFromCps(int16_t power, uint16_t cadence) {
     uint8_t  cad = (cadence > 254) ? 0xFF : (uint8_t)cadence;
@@ -30,4 +31,23 @@ BridgeData bridgeSnapshot() {
     copy = gData;
     taskEXIT_CRITICAL();
     return copy;
+}
+
+void bridgeSetControl(const ControlCommand& cmd) {
+    taskENTER_CRITICAL();
+    gControl         = cmd;
+    gControl.pending = true;
+    taskEXIT_CRITICAL();
+}
+
+bool bridgeConsumeControl(ControlCommand* out) {
+    bool got = false;
+    taskENTER_CRITICAL();
+    if (gControl.pending) {
+        *out             = gControl;
+        gControl.pending = false;
+        got              = true;
+    }
+    taskEXIT_CRITICAL();
+    return got;
 }

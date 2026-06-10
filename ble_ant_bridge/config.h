@@ -7,7 +7,7 @@
 
 // ── Target peripheral ───────────────────────────────────────────────
 // The SmartSpin2k advertises with this exact Complete Local Name.
-#define TARGET_DEVICE_NAME                 "SmartSpin2k"
+#define TARGET_DEVICE_NAME                 "TestSpin2k"
 
 // ── BLE service / characteristic UUIDs (16-bit Bluetooth SIG) ────────
 #define UUID16_SVC_CYCLING_POWER           0x1818
@@ -57,6 +57,19 @@
 #define ANT_PAGE_MANUFACTURER          0x50        // Manufacturer's Info (common)
 #define ANT_PAGE_PRODUCT               0x51        // Product Info (common)
 
+// ── FTMS service / characteristic UUIDs (16-bit Bluetooth SIG) ───────
+// Used in Phase B to write ERG + resistance + simulation targets to
+// SmartSpin2k's Fitness Machine Control Point.
+#define UUID16_SVC_FTMS                    0x1826
+#define UUID16_CHR_FTMS_CONTROL_POINT      0x2AD9
+
+// FTMS Control Point opcodes (FTMS spec v1.0 §4.16).
+// Per spec, CCCD indications must be enabled before writing any opcode.
+#define FTMS_OP_REQUEST_CONTROL            0x00
+#define FTMS_OP_SET_RESISTANCE_LEVEL       0x04   // uint8, 0.1-unit resolution (0-100 = 0-10.0)
+#define FTMS_OP_SET_TARGET_POWER           0x05   // uint16 LE, Watts
+#define FTMS_OP_SET_SIMULATION_PARAMS      0x11   // wind(int16) + grade(int16) + Cr + CwA
+
 // ── ANT+ FE-C Trainer TX (Phase A) ──────────────────────────────────
 // Fitness Equipment Control, Device Type 0x11. Channel is BIDIRECTIONAL
 // MASTER (0x10, not TX-only) so Phase B can receive Garmin control pages;
@@ -84,6 +97,13 @@
 #define FEC_CAP_BASIC_RESISTANCE       (1u << 0)
 #define FEC_CAP_TARGET_POWER           (1u << 1)  // ERG
 #define FEC_CAP_SIMULATION             (1u << 2)
+
+// ── ANT+ FE-C Control Pages (Phase B — RX ← Garmin) ─────────────────
+// Garmin sends these as acknowledged messages to the bidirectional master.
+#define ANT_FEC_PAGE_BASIC_RESISTANCE      0x30   // 48 — resistance % (0.5% units, byte 7)
+#define ANT_FEC_PAGE_TARGET_POWER          0x31   // 49 — ERG target (0.25W units, bytes 6-7)
+#define ANT_FEC_PAGE_TRACK_RESISTANCE      0x33   // 51 — simulation (wind + grade + Cr + CwA)
+#define ANT_FEC_PAGE_COMMAND_STATUS        0x47   // 71 — TX response echoing last command
 
 // Rotation: pages 16 ↔ 25 alternate every message; every Nth message a
 // background page is substituted, cycling through [54, 80, 81].

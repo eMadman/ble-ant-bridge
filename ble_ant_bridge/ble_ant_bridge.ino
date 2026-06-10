@@ -1,21 +1,22 @@
 /*
- * ble_ant_bridge.ino — BLE CPS parser → ANT+ FE-C trainer TX (Phase A).
+ * ble_ant_bridge.ino — BLE CPS parser → ANT+ FE-C trainer TX + ERG control.
  *
- * Phase 1 (scan → connect → subscribe) and Phase 2 (CPS 0x2A63 power + cadence
- * parser) feed parsed data into a shared BridgeData (bridge_core). The ANT+ side
- * is an FE-C trainer transmitter (ant_fec) so Garmin head units recognize the
- * SmartSpin2k as a controllable smart trainer (not just a power sensor):
- *   - sd_ant_* channel: bidirectional Master, Device Type 0x11, RF 57, period 8192.
- *   - Data pages 16 (General FE) + 25 (Trainer Data), rotated with 54/80/81.
- *   - EVENT_TX serviced by polling sd_ant_event_get() from loop().
- * (The legacy BPWR transmitter, ant_power_tx.*, remains in-tree but unwired.)
+ * Phase A (TX): BLE CPS 0x2A63 → bridge_core → ANT+ FE-C pages 16/25/54/80/81.
+ * Phase B (RX/control):
+ *   - ANT+ RX EVENT_RX → handleControlPage() parses Garmin's acknowledged
+ *     pages 48/49/51 → bridgeSetControl() → ControlCommand in bridge_core.
+ *   - loop() serviceControl() → bridgeConsumeControl() → FTMS 0x2AD9 write
+ *     (SetTargetPower 0x05 / SetResistance 0x04 / SetSimulation 0x11).
+ *   - Page 71 (Command Status) broadcast to confirm receipt to Garmin.
+ * (Legacy BPWR transmitter, ant_power_tx.*, remains in-tree but unwired.)
  *
  * Board: "SuperMini nRF52840 (S340)" (see bsp-s340/).
  *
- * Pass criteria:
- *   [1] Serial: "[BLE] subscribed to CPM 0x2A63" and "[ANT] FE-C TX started"
- *   [2] "[CPM] NNN W  MM RPM" lines stream while SmartSpin2k runs
- *   [3] A Garmin head unit pairs it as a Smart Trainer with live power + cadence
+ * Pass criteria Phase B:
+ *   [1] "[BLE] FTMS 0x2AD9 ready" in serial after connecting to SmartSpin2k
+ *   [2] "[ANT] Page 49 ERG target: NNN W" when Garmin sends an ERG command
+ *   [3] "[FTMS] SetTargetPower NNN W" confirming the write to SmartSpin2k
+ *   [4] SmartSpin2k resistance changes to match Garmin's ERG target
  */
 
 #include <bluefruit.h>
@@ -36,9 +37,13 @@ enum class BridgeState : uint8_t {
 
 static volatile BridgeState bridgeState = BridgeState::INIT;
 
-// BLE Central GATT client objects.
+// BLE Central GATT client objects — CPS (data source) + FTMS (control sink).
 static BLEClientService        cps(UUID16_SVC_CYCLING_POWER);
 static BLEClientCharacteristic cpm(UUID16_CHR_CYCLING_POWER_MEASURE);
+
+static BLEClientService        ftms(UUID16_SVC_FTMS);
+static BLEClientCharacteristic ftmsCP(UUID16_CHR_FTMS_CONTROL_POINT);
+static bool                    ftmsCPReady = false;  // true once CCCD + Request Control succeed
 
 // Reconnect backoff bookkeeping.
 static uint32_t reconnectBackoffMs = RECONNECT_BACKOFF_MIN_MS;
@@ -54,6 +59,7 @@ static void scanCallback(ble_gap_evt_adv_report_t* report);
 static void connectCallback(uint16_t connHandle);
 static void disconnectCallback(uint16_t connHandle, uint8_t reason);
 static void cpmNotifyCallback(BLEClientCharacteristic* chr, uint8_t* data, uint16_t len);
+static void serviceControl();
 static void serviceLed();
 
 void setup() {
@@ -71,11 +77,14 @@ void setup() {
     Bluefruit.setName("BLE-ANT-Bridge");
     Bluefruit.autoConnLed(false);   // we drive the status LED ourselves
 
-    // GATT client: register the characteristic's notify handler, then init the
-    // service + characteristic so they can be discovered after connect.
+    // CPS client (data source): notify handler registered before begin().
     cps.begin();
     cpm.setNotifyCallback(cpmNotifyCallback);
     cpm.begin();
+
+    // FTMS client (control sink): write-only use, no notify handler needed.
+    ftms.begin();
+    ftmsCP.begin();
 
     Bluefruit.Central.setConnectCallback(connectCallback);
     Bluefruit.Central.setDisconnectCallback(disconnectCallback);
@@ -102,7 +111,8 @@ void loop() {
     if (bridgeState == BridgeState::RECONNECT_WAIT && millis() >= nextScanAtMs) {
         startScanning();
     }
-    AntFec::service();       // drain ANT EVENT_TX → load next FE-C page
+    AntFec::service();       // drain ANT events: EVENT_TX → TX, EVENT_RX → control
+    serviceControl();        // consume pending ControlCommand → write to FTMS CP
     serviceLed();
 }
 
@@ -162,11 +172,29 @@ static void connectCallback(uint16_t connHandle) {
     bridgeState = BridgeState::SUBSCRIBED;
     reconnectBackoffMs = RECONNECT_BACKOFF_MIN_MS;
     Serial.println("[BLE] subscribed to CPM 0x2A63 — waiting for notifications");
+
+    // FTMS 0x1826 — optional control write path. Not finding it is non-fatal;
+    // the bridge still forwards power + cadence via ANT+ without ERG control.
+    ftmsCPReady = false;
+    if (ftms.discover(connHandle) && ftmsCP.discover()) {
+        // FTMS spec requires indications to be enabled before writing opcodes.
+        if (ftmsCP.enableNotify()) {
+            uint8_t reqCtrl = FTMS_OP_REQUEST_CONTROL;
+            ftmsCP.write(&reqCtrl, 1);
+            ftmsCPReady = true;
+            Serial.println("[BLE] FTMS 0x2AD9 ready — ERG control enabled");
+        } else {
+            Serial.println("[BLE] FTMS CP indicate enable failed — control disabled");
+        }
+    } else {
+        Serial.println("[BLE] FTMS 0x1826 not found — control disabled");
+    }
 }
 
-// Disconnected: schedule a backoff re-scan (no blocking here).
+// Disconnected: clear FTMS state and schedule a backoff re-scan (no blocking here).
 static void disconnectCallback(uint16_t connHandle, uint8_t reason) {
     (void)connHandle;
+    ftmsCPReady = false;
     Serial.printf("[BLE] disconnected, reason = 0x%02X\n", reason);
 
     nextScanAtMs = millis() + reconnectBackoffMs;
@@ -229,6 +257,52 @@ static void cpmNotifyCallback(BLEClientCharacteristic* chr, uint8_t* data, uint1
     bridgeUpdateFromCps(power, cadence);
 
     Serial.printf("[CPM] %4d W  %3u RPM\n", power, cadence);
+}
+
+// Consume the pending ControlCommand from bridge_core and write the matching
+// FTMS opcode to SmartSpin2k's Control Point. Silently no-ops when no command
+// is waiting or FTMS was not discovered on the current connection.
+static void serviceControl() {
+    ControlCommand cmd;
+    if (!ftmsCPReady || !bridgeConsumeControl(&cmd)) return;
+
+    switch (cmd.mode) {
+        case ControlMode::ERG: {
+            // SetTargetPower (0x05): opcode + uint16 LE watts
+            uint8_t buf[3] = {
+                FTMS_OP_SET_TARGET_POWER,
+                (uint8_t)(cmd.targetPowerW & 0xFF),
+                (uint8_t)(cmd.targetPowerW >> 8)
+            };
+            ftmsCP.write(buf, sizeof(buf));
+            Serial.printf("[FTMS] SetTargetPower %u W\n", cmd.targetPowerW);
+            break;
+        }
+        case ControlMode::RESISTANCE: {
+            // SetTargetResistanceLevel (0x04): opcode + uint8 (0-100, 0.1-unit res.)
+            uint8_t buf[2] = { FTMS_OP_SET_RESISTANCE_LEVEL, cmd.resistancePct };
+            ftmsCP.write(buf, sizeof(buf));
+            Serial.printf("[FTMS] SetResistance %u%%\n", cmd.resistancePct);
+            break;
+        }
+        case ControlMode::SIMULATION: {
+            // SetIndoorBikeSimulationParameters (0x11): wind(int16) + grade(int16) + Cr + CwA
+            uint8_t buf[7] = {
+                FTMS_OP_SET_SIMULATION_PARAMS,
+                (uint8_t)((uint16_t)cmd.sim.windSpeedMms & 0xFF),
+                (uint8_t)((uint16_t)cmd.sim.windSpeedMms >> 8),
+                (uint8_t)((uint16_t)cmd.sim.gradeHundredths & 0xFF),
+                (uint8_t)((uint16_t)cmd.sim.gradeHundredths >> 8),
+                cmd.sim.crCoeff,
+                cmd.sim.cwaCoeff
+            };
+            ftmsCP.write(buf, sizeof(buf));
+            Serial.printf("[FTMS] SetSimulation grade=%.2f%%\n",
+                          cmd.sim.gradeHundredths * 0.01f);
+            break;
+        }
+        default: break;
+    }
 }
 
 // Non-blocking status LED: blink while scanning/connecting, solid when running.
