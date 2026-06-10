@@ -2,22 +2,22 @@
 
 ## Current Milestone: PoC (Proof of Concept)
 
-### Phase 0: Hardware Preparation ⬜
-- [x] Register at thisisant.com, download S340 v6.1.1 hex + headers
+### Phase 0: Hardware Preparation ✅
+- [x] Register at thisisant.com, download S340 v7.0.1 hex + headers
 - [x] prepare Pi Pico with debugprobe
 - [x] Install toolchain: GNU ARM, OpenOCD, adafruit-nrfutil
 - [x] Clone & modify Adafruit nRF52 Bootloader for S340
 - [x] Create SuperMini board variant (Nice!Nano pin map + S340)
 - [x] Flash S340 SoftDevice + custom bootloader via OpenOCD
 - [x] Verify: board enumerates (verify it appears as a mass storage drive)
-- [ ] Modify Adafruit Arduino BSP (boards.txt, linker) for S340
+- [x] Modify Adafruit Arduino BSP (boards.txt, linker) for S340 — see `bsp-s340/` overlay; verified by flashing `verify_ble` (advertises as BLE-ANT-TEST)
 
-### Phase 1: BLE Central — Scan & Connect ⬜
-- [ ] Create project skeleton (ble_ant_bridge.ino, config.h)
-- [ ] Implement BLE scan with filter for "SmartSpin2k" name
-- [ ] Implement connect → service discovery → characteristic subscription
-- [ ] Verify: serial output shows CPS notifications from SmartSpin2k
-- [ ] Implement reconnection on disconnect (with backoff)
+### Phase 1: BLE Central — Scan & Connect ✅
+- [x] Create project skeleton (ble_ant_bridge.ino, config.h)
+- [x] Implement BLE scan with filter for "SmartSpin2k" name
+- [x] Implement connect → service discovery → characteristic subscription
+- [x] Verify: serial output shows CPS notifications from SmartSpin2k
+- [x] Implement reconnection on disconnect (with backoff)
 
 ### Phase 2: BLE Data Parsing ⬜
 - [ ] Implement CPS 0x2A63 parser (power + crank revolution data)

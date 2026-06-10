@@ -147,12 +147,15 @@ tracked source or written into project docs**.
 - In production, disable verbose logging to save CPU time
 
 ### LED Indicators (SuperMini)
-| State | Blue LED (P0.15) | Red LED (P0.17) |
-|---|---|---|
-| Scanning | Slow blink 1Hz | Off |
-| Connected + data | Solid | Off |
-| Connected + stale | Solid | Slow blink |
-| Error | Off | Fast blink |
+The SuperMini has **one** LED, on **P0.15, active-high** (`LED_BUILTIN`). All states are
+expressed as patterns on that single LED:
+
+| State | LED (P0.15, active-high) |
+|---|---|
+| Scanning | Slow blink ~1 Hz |
+| Connected + data | Solid on |
+| Connected + stale | Fast blink ~4 Hz |
+| Error | SOS / off |
 
 ## Testing Strategy
 

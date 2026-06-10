@@ -1,0 +1,45 @@
+# ----------------------------------------------------------------------------
+# SuperMini nRF52840 (S340 v7.0.1)  -- added by bsp-s340/install-bsp-s340.ps1
+# ----------------------------------------------------------------------------
+# Cloned from the stock `feather52840` entry, with:
+#   - build.variant   = supermini_nrf52840   (single LED P0.15, USE_LFRC)
+#   - build.ldscript  = nrf52840_s340_v7.ld  (app @ 0x31000)
+#   - build.sd_*      = s340 / 7.0.1          (redirects the SoftDevice include
+#                       path to s340_nrf52_7.0.1_API via platform.txt's
+#                       {build.sd_name}_nrf52_{build.sd_version}_API variable)
+#   - build.sd_fwid   = 0xFFFE                (DFU "skip SoftDevice requirement
+#                       check" wildcard; S340 has no canonical fwid in the
+#                       adafruit-nrfutil table — see README.md)
+#   - VID/PID         = 0x1209 / 0x5285       (SuperMini, from bootloader board.h)
+#   - upload.maximum_size = 0xC3000 (798720)  = 0xF4000 - 0x31000  (app region)
+#
+# No SoftDevice menu: this target is S340-only. platform.txt supplies defaults
+# for build.debug_flags / build.logger_flags / build.sysview_flags / build.flags.usb.
+
+superminis340.name=SuperMini nRF52840 (S340)
+
+superminis340.bootloader.tool=bootburn
+superminis340.upload.tool=nrfutil
+superminis340.upload.protocol=nrfutil
+superminis340.upload.use_1200bps_touch=true
+superminis340.upload.wait_for_upload_port=true
+superminis340.upload.maximum_size=798720
+superminis340.upload.maximum_data_size=237568
+
+superminis340.build.mcu=cortex-m4
+superminis340.build.f_cpu=64000000
+superminis340.build.board=NRF52840_SUPERMINI_S340
+superminis340.build.core=nRF5
+superminis340.build.variant=supermini_nrf52840
+superminis340.build.usb_manufacturer="Aliexpress"
+superminis340.build.usb_product="SuperMini nRF52840"
+superminis340.build.extra_flags=-DNRF52840_XXAA {build.flags.usb}
+superminis340.build.ldscript=nrf52840_s340_v7.ld
+superminis340.build.vid=0x1209
+superminis340.build.pid=0x5285
+superminis340.build.uf2_family=0xADA52840
+
+# SoftDevice S340 7.0.1 (fixed)
+superminis340.build.sd_name=s340
+superminis340.build.sd_version=7.0.1
+superminis340.build.sd_fwid=0xFFFE

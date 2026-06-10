@@ -21,7 +21,7 @@ SmartSpin2k (ESP32)          nRF52840 SuperMini              Garmin Head Unit
 | Layer | Technology | Notes |
 |---|---|---|
 | **MCU** | nRF52840 SuperMini (Cortex-M4F) | Nice!Nano pin-compatible |
-| **SoftDevice** | S340 v6.1.1 (BLE5 + ANT+) | Replaces stock S140 (BLE-only) |
+| **SoftDevice** | S340 v7.0.1 (BLE5 + ANT+) | Replaces stock S140 (BLE-only) |
 | **Framework** | Arduino (Adafruit nRF52 BSP, modified for S340) | FreeRTOS included |
 | **BLE Library** | Adafruit Bluefruit52 | Central role, connects to SmartSpin2k |
 | **ANT+ Library** | SDAntplus (orrmany) | Channel management; BPWR TX is custom |
@@ -67,8 +67,8 @@ ble-ant-bridge/
 
 - **NO NimBLE**: SmartSpin2k uses NimBLE on ESP32, but our bridge MUST use Adafruit Bluefruit library (talks to S340 SoftDevice directly)
 - **S340 Memory Map**: Application flash starts at 0x31000 (not 0x26000 like S140). All linker scripts must reflect this.
-- **ANT+ License Key (≠ network key — EXCEPTION, hardcoded on purpose)**: The S340 requires an ANT+ evaluation license key to be provided during `sd_softdevice_enable()`. Uncomment `ANT_LICENSE_KEY` in `nrf_sdm.h`. **This is NOT the ANT+ network key** — they are two unrelated tokens:
-  - *ANT license key* (this one): a SoftDevice enablement token shipped **inside the Nordic S340 headers**. It's a fixed value that comes with the SoftDevice, it's published in Nordic's SDK, and it is *expected* to be hardcoded/uncommented in `nrf_sdm.h`. Seeing it in source is correct — **do not** try to externalize it.
+- **ANT+ License Key (≠ network key — EXCEPTION, hardcoded on purpose)**: The S340 requires an ANT+ evaluation license key to be provided during `sd_softdevice_enable()` (the S340 enable is **3-arg**: clock, fault handler, license). In S340 7.0.1 the key is **already `#define`d** as `ANT_LICENSE_KEY` in `nrf_sdm.h:191` (the header even `#error`s if it's absent) — there is nothing to uncomment. **This is NOT the ANT+ network key** — they are two unrelated tokens:
+  - *ANT license key* (this one): a SoftDevice enablement token shipped **inside the Nordic S340 headers**. It's a fixed value that comes with the SoftDevice, it's the public Garmin evaluation key, and it is present-by-default in `nrf_sdm.h`. Seeing it in source is correct — **do not** try to externalize it.
   - *ANT+ network key* (the other one): the radio key for the ANT+ public network, covered by the ANT+ Adopter Agreement. This one is **never** committed — supplied at build time. See CODING_GUIDELINES.md → "ANT+ Network Key".
   - Rule of thumb: if it lives in a Nordic/`nrf_*` header it's the license key (leave it); if it's an 8-byte array you feed to your ANT+ channel config, it's the network key (keep it out of the repo).
 - **Radio TDM**: The S340 handles BLE/ANT+ time-division multiplexing automatically. No manual radio arbitration needed.
