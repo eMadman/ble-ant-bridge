@@ -72,7 +72,90 @@ Fields appear IN ORDER based on set flag bits:
   - Instantaneous Power: sint16, Watts
 ```
 
-### ANT+ Output: Bicycle Power Profile (Device Type 0x0B)
+### ANT+ Output: FE-C — Fitness Equipment Control (Device Type 0x11) ← CURRENT
+
+The bridge transmits the ANT+ **FE-C** profile so Garmin pairs the SmartSpin2k as a
+controllable smart trainer (not a bare power sensor). FE-C trainer page 25 already
+carries power + cadence, so it fully supersedes the BPWR output below.
+
+#### Channel Configuration
+```
+Channel Type:       Bidirectional Master (0x10)   ← NOT TX-only; needed for control RX
+Network Number:     0 (ANT+ public network)
+Network Key:        ANT_PLUS_NETWORK_KEY (supplied at build time — not in repo)
+RF Frequency:       57 (2457 MHz)
+Channel Period:     8192 (exactly 4.00 Hz, 0x2000)
+Device Type:        0x11 (Fitness Equipment)
+Transmission Type:  0x05
+Device Number:      NRF_FICR->DEVICEID[0] & 0xFFFF
+```
+The channel is a **bidirectional** master (0x10), unlike the BPWR build's
+`MASTER_TX_ONLY` (0x50): FE-C must receive Garmin's acknowledged control pages, so
+the RX guard band after each TX is required (a small coexistence cost vs. BLE). One
+channel is still the S340 default, so `sd_ant_enable()` stays un-called and RAM
+origin `0x20006000` is unchanged.
+
+#### Data Page 16 (0x10) — General FE Data
+```
+Byte 0: 0x10                          — Page Number
+Byte 1: Equipment Type = 0x19 (25)    — Trainer / Stationary Bike
+Byte 2: Elapsed Time (0.25 s units, wraps)
+Byte 3: 0xFF                          — Distance traveled (disabled)
+Byte 4-5: 0xFFFF                      — Speed (invalid; Garmin uses virtual speed)
+Byte 6: 0xFF                          — Heart Rate (not available)
+Byte 7: low nibble = capabilities (0) | high nibble = FE state (1=READY / 3=IN_USE)
+```
+
+#### Data Page 25 (0x19) — Specific Trainer Data (Primary)
+```
+Byte 0: 0x19                          — Page Number
+Byte 1: Update Event Count            — increments per page-25 TX (wraps)
+Byte 2: Instantaneous Cadence (RPM)   — 0xFF if stale/unavailable
+Byte 3-4: Accumulated Power (uint16 W, wraps) — running sum, only while not stale
+Byte 5: Instantaneous Power LSB       — low 8 bits of the 12-bit power value
+Byte 6: low nibble = Instantaneous Power MSB (12-bit total; 0xFFF = invalid)
+        high nibble = Trainer Status (0)
+Byte 7: low nibble = Flags (0 = at target / no power limit)
+        high nibble = FE state (1=READY / 3=IN_USE)
+```
+Power source = `bridgeSnapshot()` with the same stale rule as the BLE path
+(`!valid || millis()-lastUpdateMs > STALE_DATA_TIMEOUT_MS`). When stale: power → 0,
+cadence → 0xFF, FE state → READY.
+
+#### Data Page 54 (0x36) — FE Capabilities
+```
+Byte 0: 0x36
+Byte 1-4: 0xFF reserved
+Byte 5-6: 0xFFFF — Max Resistance (N/A)
+Byte 7: Capabilities bit field — bit0 Basic Resistance, bit1 Target Power (ERG),
+        bit2 Simulation. Phase A advertises ERG only (bit1).
+```
+
+#### Common Pages 80 (0x50) / 81 (0x51)
+Identical layout to the BPWR common pages below (manufacturer / product info),
+reused verbatim by `ant_fec.cpp`.
+
+#### Broadcast Rotation
+```
+Pages 16 and 25 alternate every message (≈2 Hz each).
+Every ANT_FEC_BACKGROUND_INTERVAL (64) messages, substitute one background page,
+cycling [54 → 80 → 81] so all three appear well within the receiver's window.
+```
+
+#### Control Mapping (Phase B — RX ← Garmin)
+| ANT+ FE-C Page (RX) | FTMS Control Point op | Notes |
+|---|---|---|
+| Page 49 — Target Power (ERG) | SetTargetPower (0x05) | 0.25 W units → W = val/4. **First.** |
+| Page 48 — Basic Resistance | SetTargetResistanceLevel (0x04) | follows |
+| Page 51 — Track/Simulation | SetIndoorBikeSimulationParameters (0x11) | follows |
+| Page 71 — Command Status | (TX response) | echo last received command |
+
+---
+
+### ANT+ Output: Bicycle Power Profile (Device Type 0x0B) — LEGACY (superseded by FE-C)
+
+> Retained for reference. `ant_power_tx.*` still implements this but is no longer
+> wired into the `.ino`. The FE-C output above replaces it.
 
 #### Channel Configuration
 ```
@@ -147,13 +230,19 @@ stateDiagram-v2
 
 ## Threading Model (FreeRTOS)
 
-The Adafruit Bluefruit + SDAntplus stack runs on FreeRTOS:
+The Adafruit Bluefruit stack runs on FreeRTOS. **There is no ANT+ library** — the
+ANT side is raw `sd_ant_*` SoftDevice calls:
 
-- **Main loop() task**: State machine management, LED updates
-- **BLE SoftDevice task**: Managed by Bluefruit library (scan callbacks, notify callbacks)
-- **ANT+ TX**: Driven by SoftDevice channel events (EVENT_TX in SDAntplus callback)
+- **Main loop() task**: state machine, LED updates, **and the ANT+ event pump** —
+  it polls `sd_ant_event_get()` each pass and, on `EVENT_TX`, loads the next page.
+  Bluefruit only drains BLE/SOC events, so ANT events sit in their own queue until
+  we pull them here. (Phase B also handles `EVENT_RX` control pages in this pump.)
+- **BLE SoftDevice task**: managed by Bluefruit (scan callbacks, notify callbacks).
 
-The BLE notification callback puts parsed data into a shared `BridgeData` struct (protected by a mutex or atomic operations). The ANT+ TX callback reads from this struct when building the next page 0x10.
+The BLE notify callback publishes parsed data into a shared `BridgeData` struct
+(guarded by a short FreeRTOS critical section — `taskENTER_CRITICAL()`, never
+`noInterrupts()` while the SoftDevice runs). The ANT+ TX path (loop() task) reads a
+consistent snapshot when building the next trainer page 25.
 
 ## Memory Budget (nRF52840: 256KB RAM, 1MB Flash)
 
@@ -162,7 +251,7 @@ The BLE notification callback puts parsed data into a shared `BridgeData` struct
 | S340 SoftDevice | ~48 KB | ~192 KB (0x31000) |
 | Bootloader | ~8 KB | ~32 KB |
 | Bluefruit52 + FreeRTOS | ~20 KB | ~120 KB |
-| SDAntplus | ~4 KB | ~30 KB |
+| ANT+ (raw sd_ant_*, no library) | ~0 KB | ~2 KB |
 | Application code | ~8 KB | ~40 KB |
 | **Total** | **~88 KB / 256 KB** | **~414 KB / 1 MB** |
 | **Headroom** | **168 KB** | **610 KB** |

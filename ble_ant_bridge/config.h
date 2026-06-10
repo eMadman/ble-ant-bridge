@@ -38,10 +38,13 @@
 // cadence is set to 0xFF ("unavailable") in the next ANT+ broadcast.
 #define STALE_DATA_TIMEOUT_MS           3000
 
-// ── ANT+ Bicycle Power TX (Phase 3) ─────────────────────────────────
-// Channel config per ARCHITECTURE.md §"ANT+ Output: Bicycle Power Profile".
+// ── ANT+ public network ─────────────────────────────────────────────
 // The 8-byte ANT+ network key is NOT here — it lives in untracked secrets.h.
 #define ANTPLUS_NETWORK_NUMBER             0       // ANT+ public network
+
+// ── ANT+ Bicycle Power TX (LEGACY — superseded by FE-C, kept unwired) ─
+// Channel config per ARCHITECTURE.md §"ANT+ Output: Bicycle Power Profile".
+// ant_power_tx.* still references these but is no longer included by the .ino.
 #define ANT_BPWR_CHANNEL_NUMBER            0
 #define ANT_BPWR_DEVICE_TYPE            0x0B       // Bicycle Power
 #define ANT_BPWR_TRANSMISSION_TYPE     0x05
@@ -53,6 +56,38 @@
 #define ANT_PAGE_POWER                 0x10        // Standard Power Only
 #define ANT_PAGE_MANUFACTURER          0x50        // Manufacturer's Info (common)
 #define ANT_PAGE_PRODUCT               0x51        // Product Info (common)
+
+// ── ANT+ FE-C Trainer TX (Phase A) ──────────────────────────────────
+// Fitness Equipment Control, Device Type 0x11. Channel is BIDIRECTIONAL
+// MASTER (0x10, not TX-only) so Phase B can receive Garmin control pages;
+// this reintroduces the RX guard band BPWR avoided — accepted for control.
+// Config per ARCHITECTURE.md §"ANT+ Output: FE-C".
+#define ANT_FEC_CHANNEL_NUMBER            0
+#define ANT_FEC_DEVICE_TYPE            0x11       // Fitness Equipment (FE-C)
+#define ANT_FEC_TRANSMISSION_TYPE     0x05
+#define ANT_FEC_RF_FREQ                  57       // 2457 MHz (same as all ANT+)
+#define ANT_FEC_CHANNEL_PERIOD          8192       // exactly 4.00 Hz (0x2000)
+#define ANT_FEC_EQUIPMENT_TYPE         0x19       // 25 = Trainer / Stationary Bike
+
+// FE-C TX data pages.
+#define ANT_FEC_PAGE_GENERAL           0x10       // 16 — General FE Data
+#define ANT_FEC_PAGE_TRAINER           0x19       // 25 — Specific Trainer Data
+#define ANT_FEC_PAGE_CAPABILITIES      0x36       // 54 — FE Capabilities
+
+// FE State (page 16/25 byte 7, high nibble): READY when no fresh data,
+// IN_USE while live CPS data is streaming.
+#define FE_STATE_READY                 0x1
+#define FE_STATE_IN_USE                0x3
+
+// FE Capabilities bit field (page 54 byte 7). Phase A advertises ERG only;
+// basic-resistance (bit0) and simulation (bit2) light up in Phase B.
+#define FEC_CAP_BASIC_RESISTANCE       (1u << 0)
+#define FEC_CAP_TARGET_POWER           (1u << 1)  // ERG
+#define FEC_CAP_SIMULATION             (1u << 2)
+
+// Rotation: pages 16 ↔ 25 alternate every message; every Nth message a
+// background page is substituted, cycling through [54, 80, 81].
+#define ANT_FEC_BACKGROUND_INTERVAL      64       // every 64 msgs send a bg page
 
 // Identity fields for the common pages (development values per ARCHITECTURE.md).
 #define ANT_MANUFACTURER_ID          0x00FF        // development

@@ -1,26 +1,27 @@
 /*
- * ble_ant_bridge.ino — Phase 3: BLE CPS parser → ANT+ Bicycle Power TX.
+ * ble_ant_bridge.ino — BLE CPS parser → ANT+ FE-C trainer TX (Phase A).
  *
  * Phase 1 (scan → connect → subscribe) and Phase 2 (CPS 0x2A63 power + cadence
- * parser) feed parsed data into a shared BridgeData (bridge_core). Phase 3 adds
- * an ANT+ Bicycle Power master transmitter (ant_power_tx) so Garmin head units
- * recognize the SmartSpin2k as a "Bicycle Power" sensor:
- *   - sd_ant_* channel: Master TX, Device Type 0x0B, RF 57, period 8182 (~4 Hz).
- *   - Data Page 0x10 (Standard Power) rotated with common pages 0x50/0x51.
+ * parser) feed parsed data into a shared BridgeData (bridge_core). The ANT+ side
+ * is an FE-C trainer transmitter (ant_fec) so Garmin head units recognize the
+ * SmartSpin2k as a controllable smart trainer (not just a power sensor):
+ *   - sd_ant_* channel: bidirectional Master, Device Type 0x11, RF 57, period 8192.
+ *   - Data pages 16 (General FE) + 25 (Trainer Data), rotated with 54/80/81.
  *   - EVENT_TX serviced by polling sd_ant_event_get() from loop().
+ * (The legacy BPWR transmitter, ant_power_tx.*, remains in-tree but unwired.)
  *
  * Board: "SuperMini nRF52840 (S340)" (see bsp-s340/).
  *
  * Pass criteria:
- *   [1] Serial: "[BLE] subscribed to CPM 0x2A63" and "[ANT] BPWR TX started"
+ *   [1] Serial: "[BLE] subscribed to CPM 0x2A63" and "[ANT] FE-C TX started"
  *   [2] "[CPM] NNN W  MM RPM" lines stream while SmartSpin2k runs
- *   [3] An ANT+ receiver (USB stick / Garmin) sees "Bicycle Power" with live power
+ *   [3] A Garmin head unit pairs it as a Smart Trainer with live power + cadence
  */
 
 #include <bluefruit.h>
 #include "config.h"
 #include "bridge_core.h"
-#include "ant_power_tx.h"
+#include "ant_fec.h"
 
 // CODING_GUIDELINES state enum (subset used this phase).
 enum class BridgeState : uint8_t {
@@ -59,7 +60,7 @@ void setup() {
     Serial.begin(SERIAL_BAUD);
     while (!Serial && millis() < SERIAL_WAIT_MS) delay(10);
 
-    Serial.println("[BLE] BLE→ANT+ bridge — Phase 2 (CPS parser)");
+    Serial.println("[BLE] BLE→ANT+ bridge — FE-C trainer TX (Phase A)");
 
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, 1 - LED_STATE_ON);
@@ -87,10 +88,10 @@ void setup() {
     Bluefruit.Scanner.useActiveScan(SCAN_ACTIVE);
     Bluefruit.Scanner.filterRssi(-80);   // ignore very weak adv to cut noise
 
-    // ANT+ Bicycle Power transmitter — must come after Bluefruit.begin() so the
+    // ANT+ FE-C trainer transmitter — must come after Bluefruit.begin() so the
     // S340 SoftDevice is already enabled. BLE bridging continues even if it fails.
-    if (!AntPowerTx::begin()) {
-        Serial.println("[ANT] BPWR init FAILED — continuing BLE-only");
+    if (!AntFec::begin()) {
+        Serial.println("[ANT] FE-C init FAILED — continuing BLE-only");
     }
 
     startScanning();
@@ -101,7 +102,7 @@ void loop() {
     if (bridgeState == BridgeState::RECONNECT_WAIT && millis() >= nextScanAtMs) {
         startScanning();
     }
-    AntPowerTx::service();   // drain ANT EVENT_TX → load next BPWR page
+    AntFec::service();       // drain ANT EVENT_TX → load next FE-C page
     serviceLed();
 }
 

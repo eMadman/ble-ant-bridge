@@ -10,7 +10,7 @@ A hardware bridge that solves a Garmin compatibility issue. The SmartSpin2k (ESP
 SmartSpin2k (ESP32)          nRF52840 SuperMini              Garmin Head Unit
 ┌─────────────────┐     ┌──────────────────────────┐     ┌──────────────────┐
 │ BLE Peripheral   │────▶│ BLE Central  │  ANT+ TX  │────▶│ ANT+ Receiver    │
-│ CPS 0x1818       │     │ (Bluefruit52)│(SDAntplus)│     │ BPWR Display     │
+│ CPS 0x1818       │     │ (Bluefruit52)│(sd_ant_*) │     │ FE-C Trainer     │
 │ FTMS 0x1826      │     │              │           │     │                  │
 │ Name: SmartSpin2k│     │    S340 SoftDevice       │     │                  │
 └─────────────────┘     └──────────────────────────┘     └──────────────────┘
@@ -24,7 +24,7 @@ SmartSpin2k (ESP32)          nRF52840 SuperMini              Garmin Head Unit
 | **SoftDevice** | S340 v7.0.1 (BLE5 + ANT+) | Replaces stock S140 (BLE-only) |
 | **Framework** | Arduino (Adafruit nRF52 BSP, modified for S340) | FreeRTOS included |
 | **BLE Library** | Adafruit Bluefruit52 | Central role, connects to SmartSpin2k |
-| **ANT+ Library** | SDAntplus (orrmany) | Channel management; BPWR TX is custom |
+| **ANT+** | Raw `sd_ant_*` SoftDevice API (no library) | FE-C trainer TX implemented directly; no SDAntplus dependency |
 | **SWD Programmer** | ST-Link V2 clone via OpenOCD | Alternative: Pi Pico with Picoprobe |
 
 ## Key Design Decisions
@@ -32,7 +32,7 @@ SmartSpin2k (ESP32)          nRF52840 SuperMini              Garmin Head Unit
 1. **CPS over FTMS for PoC**: We subscribe to CPS (0x2A63) characteristic only. Simpler parsing, direct power + crank revolution data. FTMS is a roadmap item.
 2. **Adafruit BSP as base**: Only documented S340 integration path for Arduino. Custom board variant with SuperMini pin map.
 3. **Hardware-derived ANT+ Device ID**: Lower 16 bits of `NRF_FICR->DEVICEID[0]` for uniqueness.
-4. **ANT+ BPWR TX from scratch**: SDAntplus lacks a Bicycle Power profile. We implement Data Pages 0x10 (Standard Power Only) and common pages 0x50/0x51 manually.
+4. **ANT+ TX from scratch (no library)**: we drive the S340 directly via `sd_ant_*` and build the FE-C trainer pages (16 General FE, 25 Trainer Data, 54 Capabilities) + common pages 80/81 manually. (The earlier BPWR PoC, `ant_power_tx.*`, is kept in-tree but superseded.) SDAntplus was evaluated and rejected — it needs a patched Bluefruit fork and lacks these profiles.
 
 ## File Structure
 
@@ -43,11 +43,12 @@ ble-ant-bridge/
 │   ├── ARCHITECTURE.md         ← Detailed data flow & protocol specs
 │   ├── CODING_GUIDELINES.md    ← Code style, patterns, constraints
 │   └── ROADMAP.md              ← Future work items
-├── ble_ant_bridge.ino          ← Main sketch (setup/loop, state machine)
-├── ble_parser.h/.cpp           ← BLE CPS data parser
-├── ant_power_tx.h/.cpp         ← ANT+ Bicycle Power TX profile
+├── ble_ant_bridge.ino          ← Main sketch (setup/loop, state machine, inline CPS parser)
+├── ant_fec.h/.cpp              ← ANT+ FE-C trainer TX profile (current)
+├── ant_power_tx.h/.cpp         ← legacy BPWR TX (superseded by FE-C; kept unwired)
 ├── bridge_core.h/.cpp          ← Translation pipeline (BLE→ANT+)
 ├── config.h                    ← Pin defs, constants, ANT+ config
+├── secrets.h.example           ← ANT+ network key template (real secrets.h untracked)
 └── README.md                   ← User-facing documentation
 ```
 

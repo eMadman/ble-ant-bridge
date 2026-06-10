@@ -33,19 +33,43 @@
 - [x] Verify: Garmin sees "Bicycle Power" sensor (dev# from FICR)
 - [x] Verify: power value updates in real-time
 
-### Phase 4: Integration & Polish ⬜
+### Phase 4: Integration & Polish ✅ (closed 2026-06-10)
 - [x] Wire BLE parser output → ANT+ transmitter input
 - [x] Implement stale data handling (no BLE update >3s → power=0)
-- [ ] Add LED status indicators
 - [x] End-to-end test: SmartSpin2k → bridge → Garmin head unit ✅
-- [ ] Measure latency (target: <500ms BLE-to-ANT+)
+- [~] ~~Add LED status indicators~~ — **deferred (won't-do this milestone)**; the
+  basic scan/connect/run LED in `serviceLed()` is enough for the PoC.
+- [~] ~~Measure latency (target: <500ms BLE-to-ANT+)~~ — **deferred (won't-do this
+  milestone)**; perceived latency is acceptable in end-to-end testing.
 
 ---
 
-## Phase 2: ANT+ FE-C — Full Smart Trainer Control (Post-PoC) ⬜
+## Post-PoC Milestone: ANT+ FE-C — Full Smart Trainer Control ⬜
 
 **Goal**: Replace ANT+ BPWR (data-only) with ANT+ FE-C (bidirectional).
 Garmin sees the SmartSpin2k as a full controllable smart trainer.
+
+**Confirmed scope decisions (2026-06-10):**
+- **Replace BPWR** with FE-C (don't run both) — FE-C trainer page 25 carries
+  power+cadence. `ant_power_tx.*` stays in-tree but unwired from the `.ino`.
+- **TX first (Phase A), then control (Phase B).**
+- **Keep CPS 0x2A63** as the power/cadence source; page-16 speed = invalid
+  (Garmin computes virtual speed in trainer mode). FTMS is added in Phase B for
+  the control-write path only.
+- **ERG first** for control (target power); resistance + simulation follow.
+
+### FE-C Phase A: Trainer Data TX ✅ (verified 2026-06-10)
+- [x] New `ant_fec.*` module: bidirectional Master channel, Device Type 0x11,
+      RF 57, period 8192 (raw `sd_ant_*`, no library; `sd_ant_enable()` skipped)
+- [x] TX Page 16 (General FE Data) + Page 25 (Specific Trainer Data)
+- [x] TX Page 54 (FE Capabilities — advertise ERG)
+- [x] Reuse common pages 80/81; implement 16↔25 + background rotation
+- [x] Swap `.ino` from `AntPowerTx` → `AntFec`
+- [x] Verify: Garmin pairs as **Smart Trainer** with live power + cadence ✅
+- [x] Verify: Garmin shows ERG target-power UI and sends control command ✅
+      (bridge correctly ignores it — RX handler not yet wired; Phase B)
+
+### FE-C Phase B: Garmin → Trainer Control (ERG) ⬜
 
 **What this enables on Garmin:**
 - ERG mode (Garmin sets target wattage → SmartSpin2k adjusts resistance)
@@ -66,21 +90,26 @@ Garmin sees the SmartSpin2k as a full controllable smart trainer.
 | Page 54 (FE Capabilities) | TX → Garmin | FTMS Feature flags | ✅ |
 | Page 55 (User Config) | RX ← Garmin | — (rider weight, wheel size) | Partial |
 
-**Implementation Tasks:**
-- [ ] Research ANT+ FE-C specification (Device Type 0x11) in detail
-- [ ] Change ANT+ channel from BPWR Master TX to FE-C Master TX+RX
-- [ ] Implement FE-C TX pages: 16 (General FE), 25 (Trainer Data), 50, 51, 54
-- [ ] Implement FE-C RX handlers for control pages: 48, 49, 51
-- [ ] Implement BLE FTMS Control Point write path (bridge → SmartSpin2k)
-  - Subscribe to FTMS Control Point responses (indications)
-  - Write SetTargetPower / SetTargetResistance / SetSimulationParams
-- [ ] Implement FE state machine (Ready, In Use, Finished, Paused)
-- [ ] Handle calibration flow (SpinDown via FE-C ↔ FTMS SpinDownControl)
-- [ ] Parse FTMS Indoor Bike Data (0x2AD2) for full data set (speed, cadence, power, resistance)
-- [ ] End-to-end test: Garmin Follow-a-Course → SmartSpin2k resistance changes
-- [ ] End-to-end test: Garmin ERG workout → SmartSpin2k target power
+> Note: the channel + TX pages 16/25/54 land in **Phase A** above. Phase B adds the
+> RX (control) path and the BLE write-back. ERG (page 49) ships first; basic
+> resistance (48) and simulation (51) follow once the write path is proven.
 
-**Complexity note**: FE-C is ~3-5x the PoC effort. The PoC validates the hard parts
+**Phase B implementation tasks (ERG first):**
+- [ ] FE-C RX in `AntFec::service()`: handle EVENT_RX / acknowledged Page 49
+      (Target Power, 0.25 W units → W = val/4); reply Page 71 (Command Status)
+- [ ] `bridge_core` reverse channel: guarded `ControlCommand` (target power W +
+      pending flag), set by ANT RX, consumed by the BLE write path (both in loop())
+- [ ] BLE FTMS write path: discover FTMS 0x1826 + Control Point 0x2AD9
+      (write + indicate) in `connectCallback`; Request Control (0x00) handshake;
+      write SetTargetPower (0x05, uint16 W) on each new target
+- [ ] Wire ERG end to end: Garmin ERG workout → SmartSpin2k target power
+- [ ] Then: basic resistance (48→0x04) + simulation (51→0x11); set the matching
+      capability bits in Page 54
+- [ ] FE state machine (Ready, In Use, Finished, Paused)
+- [ ] (Stretch) calibration flow (SpinDown via FE-C ↔ FTMS SpinDownControl)
+- [ ] (Stretch) parse FTMS Indoor Bike Data 0x2AD2 for full data set / real speed
+
+**Complexity note**: FE-C is ~3-5x the PoC effort. The PoC validated the hard parts
 (S340 setup, BLE Central, ANT+ channel management) first.
 
 ---
