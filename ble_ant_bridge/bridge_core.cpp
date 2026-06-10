@@ -51,3 +51,14 @@ bool bridgeConsumeControl(ControlCommand* out) {
     taskEXIT_CRITICAL();
     return got;
 }
+
+bool bridgePeekControl(ControlCommand* out) {
+    bool got = false;
+    taskENTER_CRITICAL();
+    if (gControl.pending) {
+        *out = gControl;
+        got  = true;
+    }
+    taskEXIT_CRITICAL();
+    return got;
+}

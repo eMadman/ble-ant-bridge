@@ -111,6 +111,21 @@ void AntFec::service() {
     //             cmdResponsePending so loadNextBroadcast() inserts page 71.
     while (sd_ant_event_get(&channel, &eventCode, msgBuf) == NRF_SUCCESS) {
         if (channel == ANT_FEC_CHANNEL_NUMBER) {
+#if ANT_RX_DEBUG
+            // Log every non-TX event so we can see whether RX events fire at
+            // all and, if so, what eventCode / message ID the S340 dispatches
+            // them under. EVENT_TX is filtered out because it would drown the
+            // log at 4 Hz.
+            if (eventCode != EVENT_TX) {
+                Serial.printf("[ANT] evt code=0x%02X msgID=0x%02X "
+                              "payload=%02X %02X %02X %02X %02X %02X %02X %02X\n",
+                              eventCode, msgBuf[1],
+                              msgBuf[MESG_DATA_OFFSET + 0], msgBuf[MESG_DATA_OFFSET + 1],
+                              msgBuf[MESG_DATA_OFFSET + 2], msgBuf[MESG_DATA_OFFSET + 3],
+                              msgBuf[MESG_DATA_OFFSET + 4], msgBuf[MESG_DATA_OFFSET + 5],
+                              msgBuf[MESG_DATA_OFFSET + 6], msgBuf[MESG_DATA_OFFSET + 7]);
+            }
+#endif
             if (eventCode == EVENT_TX) {
                 loadNextBroadcast();
                 txCount++;
@@ -195,6 +210,18 @@ static void buildPageTrainer(uint8_t* buf, const BridgeData& d, bool stale) {
     if (!stale) accumPower += (uint16_t)power; // uint16 wrap at 65536 is intended
 
     uint8_t feState = stale ? FE_STATE_READY : FE_STATE_IN_USE;
+
+#if ANT_RX_DEBUG
+    // Trace READY ↔ IN_USE transitions. Garmin may suppress ERG control while
+    // we advertise READY, so we want to confirm the bridge ticks to IN_USE
+    // before the first ERG attempt.
+    static uint8_t prevFeState = 0xFF;
+    if (feState != prevFeState) {
+        Serial.printf("[ANT] FE state -> %s\n",
+                      feState == FE_STATE_IN_USE ? "IN_USE" : "READY");
+        prevFeState = feState;
+    }
+#endif
 
     buf[0] = ANT_FEC_PAGE_TRAINER;             // 0x19 — page number
     buf[1] = eventCount;                       // update event count
@@ -312,6 +339,15 @@ static void handleControlPage(const uint8_t* data) {
             break;
         }
         default:
+#if ANT_RX_DEBUG
+            // Catches off-by-one payload-offset bugs: if Garmin is sending a
+            // real control page but we're reading the page-number byte from
+            // the wrong offset, the page id here will be 0x00 / 0xFF / etc.
+            Serial.printf("[ANT] unknown page 0x%02X bytes "
+                          "%02X %02X %02X %02X %02X %02X %02X\n",
+                          data[0], data[1], data[2], data[3],
+                          data[4], data[5], data[6], data[7]);
+#endif
             break;   // unknown page — ignore silently
     }
 }

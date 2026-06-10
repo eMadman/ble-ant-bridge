@@ -60,3 +60,8 @@ void bridgeSetControl(const ControlCommand& cmd);
 // Atomically read and clear the pending command. Returns true if a command
 // was waiting. Called from the BLE write path (loop() task).
 bool bridgeConsumeControl(ControlCommand* out);
+
+// Non-destructive read of the pending command. Used by the BLE write path to
+// decide whether the command is currently safe to apply (e.g. defer ERG until
+// the rider is actually moving) without burning the queue slot.
+bool bridgePeekControl(ControlCommand* out);
