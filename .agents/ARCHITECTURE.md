@@ -33,10 +33,22 @@ deltaTime = currentCrankTime - previousCrankTime   // handle uint16 rollover
 cadenceRPM = (deltaRevs * 60 * 1024) / deltaTime
 ```
 
-**SmartSpin2k CPS Flags (from source code analysis):**
-The SmartSpin2k's `CyclingPowerMeasurement` class typically sets:
-- `crankRevolutionDataPresent = 1` (cadence via crank revs)
-- `instantaneousPower` is always populated
+**SmartSpin2k CPS format (verified from live device):**
+The SmartSpin2k sends `flags = 0x0030` — **both bit 4 (Wheel Revolution Data) and bit 5 (Crank Revolution Data) set** — producing a 14-byte packet:
+
+```
+Byte 0-1:  Flags = 0x0030 (uint16 LE)
+Byte 2-3:  Instantaneous Power (sint16 W)        ← e.g. 0x00AD = 173 W
+Byte 4-7:  Cumulative Wheel Revolutions (uint32)  ← bit 4 block: 6 bytes total
+Byte 8-9:  Last Wheel Event Time (uint16, 1/2048s)
+Byte 10-11: Cumulative Crank Revolutions (uint16) ← bit 5 block: 4 bytes total
+Byte 12-13: Last Crank Event Time (uint16, 1/1024s)
+```
+
+**Critical parser note:** Because bit 4 is always set, the crank data is never at a fixed
+offset. The parser must walk optional fields in flag-bit order and skip the 6-byte wheel
+block before reading crank data. See `ble_ant_bridge.ino:cpmNotifyCallback` for the
+implemented offset walk (bits 0, 2, 4 each advance the offset before reaching bit 5).
 
 ### FTMS Input: Indoor Bike Data (0x2AD2) — ROADMAP
 

@@ -1,0 +1,14 @@
+# ANT+ network key — never commit; copy secrets.h.example → secrets.h and fill in
+secrets.h
+
+# Arduino IDE build output
+build/
+*.elf
+*.bin
+*.hex
+*.map
+
+graphify-out/
+.venv
+
+claude.md

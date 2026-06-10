@@ -19,25 +19,25 @@
 - [x] Verify: serial output shows CPS notifications from SmartSpin2k
 - [x] Implement reconnection on disconnect (with backoff)
 
-### Phase 2: BLE Data Parsing ⬜
-- [ ] Implement CPS 0x2A63 parser (power + crank revolution data)
-- [ ] Implement cadence calculation from crank revolution deltas
-- [ ] Handle uint16 rollover for crank revolutions and event time
-- [ ] Verify: serial output shows correct power (W) and cadence (RPM)
+### Phase 2: BLE Data Parsing ✅
+- [x] Implement CPS 0x2A63 parser (power + crank revolution data)
+- [x] Implement cadence calculation from crank revolution deltas
+- [x] Handle uint16 rollover for crank revolutions and event time
+- [x] Verify: serial output shows correct power (W) and cadence (RPM)
 
-### Phase 3: ANT+ Bicycle Power TX ⬜
-- [ ] Initialize SDAntplus, configure ANT+ channel
-- [ ] Implement Data Page 0x10 (Standard Power Only)
-- [ ] Implement Data Pages 0x50, 0x51 (common pages)
-- [ ] Implement broadcast rotation pattern (130-message cycle)
-- [ ] Verify: ANT+ USB stick or Garmin sees "Bicycle Power" sensor
-- [ ] Verify: power value updates in real-time
+### Phase 3: ANT+ Bicycle Power TX ✅
+- [x] Initialize ANT+ channel (raw sd_ant_* — no library; CHANNEL_TYPE_MASTER_TX_ONLY)
+- [x] Implement Data Page 0x10 (Standard Power Only)
+- [x] Implement Data Pages 0x50, 0x51 (common pages)
+- [x] Implement broadcast rotation pattern (130-message cycle)
+- [x] Verify: Garmin sees "Bicycle Power" sensor (dev# from FICR)
+- [x] Verify: power value updates in real-time
 
 ### Phase 4: Integration & Polish ⬜
-- [ ] Wire BLE parser output → ANT+ transmitter input
-- [ ] Implement stale data handling (no BLE update >3s → power=0)
+- [x] Wire BLE parser output → ANT+ transmitter input
+- [x] Implement stale data handling (no BLE update >3s → power=0)
 - [ ] Add LED status indicators
-- [ ] End-to-end test: SmartSpin2k → bridge → Garmin head unit
+- [x] End-to-end test: SmartSpin2k → bridge → Garmin head unit ✅
 - [ ] Measure latency (target: <500ms BLE-to-ANT+)
 
 ---

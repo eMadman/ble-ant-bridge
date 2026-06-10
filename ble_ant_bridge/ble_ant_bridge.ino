@@ -1,23 +1,26 @@
 /*
- * ble_ant_bridge.ino — Phase 1: BLE Central scan → connect → subscribe.
+ * ble_ant_bridge.ino — Phase 3: BLE CPS parser → ANT+ Bicycle Power TX.
  *
- * Scans for a peripheral advertising the Complete Local Name "SmartSpin2k",
- * connects, discovers Cycling Power Service (0x1818), subscribes to the Cycling
- * Power Measurement characteristic (0x2A63), and dumps each notification to
- * Serial. Reconnects with exponential backoff on disconnect.
+ * Phase 1 (scan → connect → subscribe) and Phase 2 (CPS 0x2A63 power + cadence
+ * parser) feed parsed data into a shared BridgeData (bridge_core). Phase 3 adds
+ * an ANT+ Bicycle Power master transmitter (ant_power_tx) so Garmin head units
+ * recognize the SmartSpin2k as a "Bicycle Power" sensor:
+ *   - sd_ant_* channel: Master TX, Device Type 0x0B, RF 57, period 8182 (~4 Hz).
+ *   - Data Page 0x10 (Standard Power) rotated with common pages 0x50/0x51.
+ *   - EVENT_TX serviced by polling sd_ant_event_get() from loop().
  *
- * Board: "SuperMini nRF52840 (S340)" (see bsp-s340/). BLE-only for now — the
- * S340 ANT+ side is wired up in Phase 3. No CPS field parsing yet: Phase 2 adds
- * the power/cadence decode. This phase only proves notifications flow.
+ * Board: "SuperMini nRF52840 (S340)" (see bsp-s340/).
  *
  * Pass criteria:
- *   [1] Serial: "[BLE] scanning for 'SmartSpin2k'"
- *   [2] Serial: "[BLE] connected" then "[BLE] subscribed to CPM 0x2A63"
- *   [3] Serial: "[CPM] <n> bytes: ..." lines stream while the SmartSpin2k runs
+ *   [1] Serial: "[BLE] subscribed to CPM 0x2A63" and "[ANT] BPWR TX started"
+ *   [2] "[CPM] NNN W  MM RPM" lines stream while SmartSpin2k runs
+ *   [3] An ANT+ receiver (USB stick / Garmin) sees "Bicycle Power" with live power
  */
 
 #include <bluefruit.h>
 #include "config.h"
+#include "bridge_core.h"
+#include "ant_power_tx.h"
 
 // CODING_GUIDELINES state enum (subset used this phase).
 enum class BridgeState : uint8_t {
@@ -40,6 +43,11 @@ static BLEClientCharacteristic cpm(UUID16_CHR_CYCLING_POWER_MEASURE);
 static uint32_t reconnectBackoffMs = RECONNECT_BACKOFF_MIN_MS;
 static uint32_t nextScanAtMs       = 0;
 
+// Crank revolution state for cadence calculation (reset on each new connection).
+static bool     prevCrankValid         = false;
+static uint16_t prevCumCrankRevs       = 0;
+static uint16_t prevLastCrankEventTime = 0;
+
 static void startScanning();
 static void scanCallback(ble_gap_evt_adv_report_t* report);
 static void connectCallback(uint16_t connHandle);
@@ -51,7 +59,7 @@ void setup() {
     Serial.begin(SERIAL_BAUD);
     while (!Serial && millis() < SERIAL_WAIT_MS) delay(10);
 
-    Serial.println("[BLE] BLE→ANT+ bridge — Phase 1 (BLE Central)");
+    Serial.println("[BLE] BLE→ANT+ bridge — Phase 2 (CPS parser)");
 
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, 1 - LED_STATE_ON);
@@ -79,6 +87,12 @@ void setup() {
     Bluefruit.Scanner.useActiveScan(SCAN_ACTIVE);
     Bluefruit.Scanner.filterRssi(-80);   // ignore very weak adv to cut noise
 
+    // ANT+ Bicycle Power transmitter — must come after Bluefruit.begin() so the
+    // S340 SoftDevice is already enabled. BLE bridging continues even if it fails.
+    if (!AntPowerTx::begin()) {
+        Serial.println("[ANT] BPWR init FAILED — continuing BLE-only");
+    }
+
     startScanning();
 }
 
@@ -87,6 +101,7 @@ void loop() {
     if (bridgeState == BridgeState::RECONNECT_WAIT && millis() >= nextScanAtMs) {
         startScanning();
     }
+    AntPowerTx::service();   // drain ANT EVENT_TX → load next BPWR page
     serviceLed();
 }
 
@@ -142,8 +157,9 @@ static void connectCallback(uint16_t connHandle) {
         return;
     }
 
+    prevCrankValid = false;   // reset cadence state on fresh connection
     bridgeState = BridgeState::SUBSCRIBED;
-    reconnectBackoffMs = RECONNECT_BACKOFF_MIN_MS;   // healthy link → reset backoff
+    reconnectBackoffMs = RECONNECT_BACKOFF_MIN_MS;
     Serial.println("[BLE] subscribed to CPM 0x2A63 — waiting for notifications");
 }
 
@@ -163,26 +179,55 @@ static void disconnectCallback(uint16_t connHandle, uint8_t reason) {
     bridgeState = BridgeState::RECONNECT_WAIT;
 }
 
-// CPM notification handler. Phase 1: raw dump + always-present power word.
-// Full flag/crank decode + cadence math is Phase 2.
+// CPS 0x2A63 parser — Bluetooth SIG spec §3.65 (Cycling Power Measurement).
+// Optional field layout (flag bit → bytes appended after the fixed 4-byte header):
+//   0: Pedal Power Balance (1 byte)       1: Pedal Power Balance Reference (flag only)
+//   2: Accumulated Torque (2 bytes)       3: Accumulated Torque Source (flag only)
+//   4: Wheel Revolution Data (6 bytes: uint32 cumWheelRevs + uint16 lastWheelEventTime/2048s)
+//   5: Crank Revolution Data (4 bytes: uint16 cumCrankRevs + uint16 lastCrankEventTime/1024s)
 static void cpmNotifyCallback(BLEClientCharacteristic* chr, uint8_t* data, uint16_t len) {
     (void)chr;
     bridgeState = BridgeState::RUNNING;
 
     if (len < 4) {
-        Serial.printf("[CPM] short notification (%u bytes)\n", len);
+        Serial.printf("[CPM] short notification (%u bytes) — ignored\n", len);
         return;
     }
 
-    // Bytes 0-1: Flags (uint16 LE); Bytes 2-3: Instantaneous Power (sint16 LE, W).
-    uint16_t flags = data[0] | (data[1] << 8);
+    uint16_t flags = (uint16_t)(data[0] | (data[1] << 8));
     int16_t  power = (int16_t)(data[2] | (data[3] << 8));
-    bool crankPresent = flags & (1 << 5);
 
-    Serial.printf("[CPM] %u bytes: ", len);
-    for (uint16_t i = 0; i < len; i++) Serial.printf("%02X ", data[i]);
-    Serial.printf("| power=%d W flags=0x%04X crank=%s\n",
-                  power, flags, crankPresent ? "yes" : "no");
+    // Walk optional fields to reach the crank data offset.
+    uint8_t offset = 4;
+    if (flags & (1u << 0)) offset += 1;   // Pedal Power Balance
+    if (flags & (1u << 2)) offset += 2;   // Accumulated Torque
+    if (flags & (1u << 4)) offset += 6;   // Wheel Revolution Data
+
+    uint16_t cadence = 0;
+
+    if ((flags & (1u << 5)) && ((uint16_t)(offset + 4) <= len)) {
+        uint16_t cumCrank  = (uint16_t)(data[offset]     | (data[offset + 1] << 8));
+        uint16_t crankTime = (uint16_t)(data[offset + 2] | (data[offset + 3] << 8));
+
+        if (prevCrankValid) {
+            uint16_t dRevs = (uint16_t)(cumCrank  - prevCumCrankRevs);
+            uint16_t dTime = (uint16_t)(crankTime - prevLastCrankEventTime);
+            if (dRevs > 0 && dTime > 0) {
+                // crankTime resolution = 1/1024 s  →  RPM = dRevs × 60 × 1024 / dTime
+                cadence = (uint16_t)((uint32_t)dRevs * 60u * 1024u / dTime);
+            }
+            // dRevs == 0: crank stopped → cadence stays 0
+        }
+
+        prevCumCrankRevs       = cumCrank;
+        prevLastCrankEventTime = crankTime;
+        prevCrankValid         = true;
+    }
+
+    // Publish to the shared store; the ANT+ TX path reads it on each EVENT_TX.
+    bridgeUpdateFromCps(power, cadence);
+
+    Serial.printf("[CPM] %4d W  %3u RPM\n", power, cadence);
 }
 
 // Non-blocking status LED: blink while scanning/connecting, solid when running.

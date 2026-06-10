@@ -8,7 +8,7 @@ Detailed specs live in `.agents/` — read these before non-trivial work:
 - `.agents/PROJECT.md` — overview, stack, critical constraints
 - `.agents/ARCHITECTURE.md` — BLE/ANT byte layouts, broadcast rotation, state machine
 - `.agents/CODING_GUIDELINES.md` — style, "do not do" list, secrets policy
-- `.agents/ROADMAP.md` — phased task list (current: Phase 0 — modify Arduino BSP for S340)
+- `.agents/ROADMAP.md` — phased task list (current: Phase 3 — ANT+ Bicycle Power TX; Phases 0–2 complete)
 
 ## Toolchain (authoritative)
 - **IDE:** Arduino IDE (inside Google Antigravity, a VS Code fork). `pioarduino` is also installed
