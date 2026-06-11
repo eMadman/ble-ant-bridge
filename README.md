@@ -33,10 +33,9 @@ is in progress.
   application firmware with the normal **Upload** button (app-only DFU). Re-flashing the
   SoftDevice/bootloader is only ever done deliberately over SWD (Stage 2).
 - **Two different "keys" — don't confuse them:**
-  - **ANT *license* key** — ships *inside* the Nordic S340 header (`nrf_sdm.h`), it's the
-    public Garmin evaluation key, not secret, and you never touch it.
+  - **ANT *license* key** — ships *inside* the Nordic S340 header (`nrf_sdm.h`)
   - **ANT+ *network* key** — the 8-byte radio key you put in `secrets.h`. Covered by the
-    ANT+ Adopter Agreement; keep it out of the repo.
+    ANT+ Adopter Agreement.
 
 ---
 
