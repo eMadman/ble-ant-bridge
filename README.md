@@ -15,9 +15,8 @@ displays) recognize it natively.
 └────────────────────┘     └──────────────────────────┘     └──────────────────────┘
 ```
 
-**Status:** live **power + cadence** to a Garmin works today (broadcasts as an FE-C
-trainer). **ERG control** (the Garmin commanding a target wattage back to the SmartSpin2k)
-is in progress.
+**Status:** live **power + cadence** and **ERG control** work today (broadcasts as an 
+FE-C trainer). The Garmin commands a target wattage and the SmartSpin2k follows it.
 
 > Why this exists: SmartSpin2k advertises power over BLE, but Garmin head units often won't
 > use a BLE power source reliably. ANT+ is the protocol Garmin natively trusts, so this
@@ -233,8 +232,8 @@ can build app-only DFU images for this board. It's idempotent (safe to re-run).
 3. On your Garmin, add a new sensor — the bridge appears as a **Smart Trainer** (ANT+ FE-C)
    with live **power and cadence**.
 
-> **ERG mode** (the Garmin setting a target wattage that the SmartSpin2k follows) is not
-> finished yet.
+> **ERG mode** works — the Garmin sets a target wattage and the SmartSpin2k follows it.
+> Basic resistance and simulation modes have not been thoroughly tested.
 
 ---
 
