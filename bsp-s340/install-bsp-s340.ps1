@@ -105,5 +105,5 @@ Write-Host ""
 Write-Host "Done. In Arduino IDE:" -ForegroundColor Green
 Write-Host "  1. Tools > Board > Adafruit nRF52 > 'SuperMini nRF52840 (S340)'"
 Write-Host "  2. Select the COM port; put the board in DFU (double-tap reset) if needed."
-Write-Host "  3. Upload verify_ble/verify_ble.ino.  NEVER use 'Burn Bootloader'."
+Write-Host "  3. Upload ble_ant_bridge/ble_ant_bridge.ino.  NEVER use 'Burn Bootloader'."
 Write-Host "  (Restart Arduino IDE if the board does not appear in the menu.)"

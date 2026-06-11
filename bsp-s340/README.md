@@ -69,12 +69,6 @@ Stock BSP 1.7.0 wraps `sd_softdevice_enable` in `#ifdef ANT_LICENSE_KEY`, and th
 S340 `nrf_sdm.h` defines that macro, so the correct 3-arg ANT form is selected
 automatically — no `bluefruit.cpp` patch required.
 
-## Verify
-
-Flash `verify_ble/verify_ble.ino`. Pass = Serial @115200 prints
-`[VERIFY] Advertising as 'BLE-ANT-TEST'`, the P0.15 LED blinks ~1 Hz, and
-nRF Connect sees / can connect+disconnect `BLE-ANT-TEST`.
-
 ## Notes
 
 ### DFU `sd_fwid = 0xFFFE`

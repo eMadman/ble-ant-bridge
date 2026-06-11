@@ -10,7 +10,7 @@
 - [x] Create SuperMini board variant (Nice!Nano pin map + S340)
 - [x] Flash S340 SoftDevice + custom bootloader via OpenOCD
 - [x] Verify: board enumerates (verify it appears as a mass storage drive)
-- [x] Modify Adafruit Arduino BSP (boards.txt, linker) for S340 — see `bsp-s340/` overlay; verified by flashing `verify_ble` (advertises as BLE-ANT-TEST)
+- [x] Modify Adafruit Arduino BSP (boards.txt, linker) for S340 — see `bsp-s340/` overlay (verified by flashing a minimal BLE test sketch advertising as BLE-ANT-TEST)
 
 ### Phase 1: BLE Central — Scan & Connect ✅
 - [x] Create project skeleton (ble_ant_bridge.ino, config.h)

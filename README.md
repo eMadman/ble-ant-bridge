@@ -74,7 +74,6 @@ is in progress.
 |---|---|
 | [`ble_ant_bridge/`](ble_ant_bridge/) | The firmware sketch (`ble_ant_bridge.ino`, `config.h`, `secrets.h.example`, ANT/BLE source). |
 | [`bsp-s340/`](bsp-s340/) | Installer that teaches the Adafruit BSP 1.7.0 to build for S340 + the SuperMini. |
-| [`verify_ble/`](verify_ble/) | Minimal sketch to confirm the toolchain/board work before flashing the real firmware. |
 
 The S340 SoftDevice and bootloader are built from the **sibling repo**
 `Adafruit_nRF52_Bootloader` (cloned in Stage 2) — they are not part of this repo.
@@ -188,12 +187,6 @@ can build app-only DFU images for this board. It's idempotent (safe to re-run).
    ```
 3. **Restart Arduino IDE**, then select
    **Tools ▸ Board ▸ Adafruit nRF52 ▸ "SuperMini nRF52840 (S340)"**.
-
-### Verify the toolchain
-Open and **Upload** [`verify_ble/verify_ble.ino`](verify_ble/verify_ble.ino). Pass criteria:
-- Serial Monitor @ **115200** prints `[VERIFY] Advertising as 'BLE-ANT-TEST'`
-- The P0.15 LED blinks ~1 Hz
-- A BLE scanner (e.g. nRF Connect) sees and can connect to `BLE-ANT-TEST`
 
 > More detail (what each overlay file changes, `sd_fwid` wildcard, RAM tuning) is in
 > [`bsp-s340/README.md`](bsp-s340/README.md).
