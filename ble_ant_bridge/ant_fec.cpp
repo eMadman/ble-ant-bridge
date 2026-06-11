@@ -176,11 +176,11 @@ static uint32_t loadNextBroadcast() {
     return sd_ant_broadcast_message_tx(ANT_FEC_CHANNEL_NUMBER, ANT_STANDARD_DATA_PAYLOAD_SIZE, payload);
 }
 
-// Page 16 (0x10) — General FE Data. Equipment type, elapsed time, FE state.
-// Speed is reported invalid (0xFFFF): Garmin computes virtual speed from power
-// in trainer mode, so the bridge need not synthesize one.
+// Page 16 (0x10) — General FE Data. Equipment type, elapsed time, real speed,
+// FE state. Speed is derived from SS2k wheel-revolution data (see the CPS
+// parser) in 0.001 m/s units; 0xFFFF when stale or not yet computable.
 static void buildPageGeneralFE(uint8_t* buf, const BridgeData& d, bool stale) {
-    (void)d;
+    uint16_t speed   = stale ? 0xFFFF : d.speedMmps;           // 0.001 m/s; 0xFFFF = invalid
     uint8_t feState  = stale ? FE_STATE_READY : FE_STATE_IN_USE;
     uint8_t elapsed  = (uint8_t)((millis() - startMs) / 250u);  // 0.25 s units, wraps
 
@@ -188,11 +188,11 @@ static void buildPageGeneralFE(uint8_t* buf, const BridgeData& d, bool stale) {
     buf[1] = ANT_FEC_EQUIPMENT_TYPE;           // 0x19 — trainer / stationary bike
     buf[2] = elapsed;                          // elapsed time (0.25 s units)
     buf[3] = 0xFF;                             // distance traveled — disabled
-    buf[4] = 0xFF;                             // speed LSB — invalid
-    buf[5] = 0xFF;                             // speed MSB — invalid (0xFFFF)
+    buf[4] = (uint8_t)(speed & 0xFF);          // speed LSB (0.001 m/s)
+    buf[5] = (uint8_t)(speed >> 8);            // speed MSB
     buf[6] = 0xFF;                             // heart rate — not available
-    // byte7 low nibble = capabilities (0: no HR, distance disabled, real speed);
-    //       high nibble = FE state.
+    // byte7 low nibble = capabilities (0: no HR, distance disabled, real speed
+    //       — virtual-speed flag bit 3 = 0); high nibble = FE state.
     buf[7] = (uint8_t)(feState << 4);
 }
 

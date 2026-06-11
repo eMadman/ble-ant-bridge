@@ -58,6 +58,11 @@ static bool     prevCrankValid         = false;
 static uint16_t prevCumCrankRevs       = 0;
 static uint16_t prevLastCrankEventTime = 0;
 
+// Wheel revolution state for speed calculation (reset on each new connection).
+static bool     prevWheelValid         = false;
+static uint32_t prevCumWheelRevs       = 0;
+static uint16_t prevLastWheelEventTime = 0;
+
 static void startScanning();
 static void scanCallback(ble_gap_evt_adv_report_t* report);
 static void connectCallback(uint16_t connHandle);
@@ -180,6 +185,7 @@ static void connectCallback(uint16_t connHandle) {
     }
 
     prevCrankValid = false;   // reset cadence state on fresh connection
+    prevWheelValid = false;   // reset speed state on fresh connection
     bridgeState = BridgeState::SUBSCRIBED;
     reconnectBackoffMs = RECONNECT_BACKOFF_MIN_MS;
     Serial.println("[BLE] subscribed to CPM 0x2A63 — waiting for notifications");
@@ -241,11 +247,38 @@ static void cpmNotifyCallback(BLEClientCharacteristic* chr, uint8_t* data, uint1
     uint16_t flags = (uint16_t)(data[0] | (data[1] << 8));
     int16_t  power = (int16_t)(data[2] | (data[3] << 8));
 
-    // Walk optional fields to reach the crank data offset.
+    // Walk optional fields, parsing the wheel block (if present) on the way to
+    // the crank data offset.
     uint8_t offset = 4;
     if (flags & (1u << 0)) offset += 1;   // Pedal Power Balance
     if (flags & (1u << 2)) offset += 2;   // Accumulated Torque
-    if (flags & (1u << 4)) offset += 6;   // Wheel Revolution Data
+
+    // Wheel revolution data → FE-C speed. SS2k sends 6 bytes here: uint32
+    // cumulative wheel revs + uint16 last wheel event time (1/2048 s).
+    uint16_t speedMmps = 0xFFFF;          // unavailable until computable
+    if ((flags & (1u << 4)) && ((uint16_t)(offset + 6) <= len)) {
+        uint32_t cumWheel  = (uint32_t)data[offset]         | ((uint32_t)data[offset + 1] << 8)
+                           | ((uint32_t)data[offset + 2] << 16) | ((uint32_t)data[offset + 3] << 24);
+        uint16_t wheelTime = (uint16_t)(data[offset + 4] | (data[offset + 5] << 8));
+
+        if (prevWheelValid) {
+            uint32_t dRevs = cumWheel - prevCumWheelRevs;                    // uint32 wrap ok
+            uint16_t dTime = (uint16_t)(wheelTime - prevLastWheelEventTime); // 1/2048 s
+            if (dRevs == 0) {
+                speedMmps = 0;            // wheel stopped
+            } else if (dTime > 0) {
+                // wheelTime resolution = 1/2048 s  →  mm/s = dRevs × circ_mm × 2048 / dTime
+                uint32_t v = (uint32_t)dRevs * WHEEL_CIRCUMFERENCE_MM * 2048u / dTime;
+                speedMmps = (v > 0xFFFE) ? 0xFFFE : (uint16_t)v;
+            }
+            // dTime == 0 with dRevs > 0: leave unavailable this notification
+        }
+
+        prevCumWheelRevs       = cumWheel;
+        prevLastWheelEventTime = wheelTime;
+        prevWheelValid         = true;
+    }
+    if (flags & (1u << 4)) offset += 6;   // advance past wheel block to crank data
 
     uint16_t cadence = 0;
 
@@ -269,7 +302,7 @@ static void cpmNotifyCallback(BLEClientCharacteristic* chr, uint8_t* data, uint1
     }
 
     // Publish to the shared store; the ANT+ TX path reads it on each EVENT_TX.
-    bridgeUpdateFromCps(power, cadence);
+    bridgeUpdateFromCps(power, cadence, speedMmps);
 
     // Throttle steady-state CPM logging: at most once per CPM_LOG_INTERVAL_MS,
     // but always print when cadence crosses the 0 boundary so movement
@@ -279,7 +312,13 @@ static void cpmNotifyCallback(BLEClientCharacteristic* chr, uint8_t* data, uint1
     bool     cpmMoving = cadence > 0;
     uint32_t nowMs     = millis();
     if (cpmMoving != prevCpmMoving || (nowMs - lastCpmLogMs) >= CPM_LOG_INTERVAL_MS) {
-        Serial.printf("[CPM] %4d W  %3u RPM\n", power, cadence);
+        // speedMmps 0xFFFF = unavailable; otherwise convert mm/s → km/h for the log.
+        if (speedMmps == 0xFFFF) {
+            Serial.printf("[CPM] %4d W  %3u RPM   --.- km/h\n", power, cadence);
+        } else {
+            Serial.printf("[CPM] %4d W  %3u RPM  %4.1f km/h\n",
+                          power, cadence, speedMmps * 0.0036f);
+        }
         lastCpmLogMs  = nowMs;
         prevCpmMoving = cpmMoving;
     }

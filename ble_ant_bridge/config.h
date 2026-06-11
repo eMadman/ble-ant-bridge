@@ -42,6 +42,12 @@
 // cadence is set to 0xFF ("unavailable") in the next ANT+ broadcast.
 #define STALE_DATA_TIMEOUT_MS 3000
 
+// Wheel circumference (mm) used to convert SS2k wheel revolutions into the
+// FE-C Page-16 speed field. The head unit reads the resulting velocity
+// directly; no wheel size is configured Garmin-side for FE-C speed.
+// Default ≈ 700×25c; tune to match what SS2k actually reports if needed.
+#define WHEEL_CIRCUMFERENCE_MM 2105
+
 // ── FTMS ERG control timing ─────────────────────────────────────────
 // SS2k will ACK Start (0x07) immediately but appears to need several CPS data
 // updates worth of "Training" state before it will actually engage closed-loop

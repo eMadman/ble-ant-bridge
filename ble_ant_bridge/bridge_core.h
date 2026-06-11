@@ -19,13 +19,15 @@
 struct BridgeData {
     int16_t  instantaneousPower;   // Watts (sint16, from CPS 0x2A63)
     uint8_t  cadence;              // RPM, 0xFF = unavailable
+    uint16_t speedMmps;            // 0.001 m/s (FE-C page 16 speed); 0xFFFF = unavailable
     uint32_t lastUpdateMs;         // millis() of the last BLE notification
     bool     valid;               // true once at least one notification is stored
 };
 
-// Publish freshly parsed CPS power/cadence. Called from the BLE notify callback.
-// Cadence ≥ 255 is clamped to 0xFF (ANT+ "unavailable").
-void bridgeUpdateFromCps(int16_t power, uint16_t cadence);
+// Publish freshly parsed CPS power/cadence/speed. Called from the BLE notify
+// callback. Cadence ≥ 255 is clamped to 0xFF (ANT+ "unavailable"); speed is
+// in 0.001 m/s units (0xFFFF = unavailable).
+void bridgeUpdateFromCps(int16_t power, uint16_t cadence, uint16_t speedMmps);
 
 // Return a consistent snapshot for the ANT+ TX path. Called from loop().
 BridgeData bridgeSnapshot();
