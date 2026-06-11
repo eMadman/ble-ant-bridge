@@ -27,11 +27,23 @@
 [CmdletBinding()]
 param(
   [string]$BspDir      = "$env:LOCALAPPDATA\Arduino15\packages\adafruit\hardware\nrf52\1.7.0",
-  [string]$S340Include = "D:\git\ss2k\bridge_project\Adafruit_nRF52_Bootloader\lib\softdevice\s340_nrf52_7.0.1\s340_nrf52_7.0.1_API\include"
+  [string]$S340Include = ""
 )
 
 $ErrorActionPreference = 'Stop'
 $overlay = $PSScriptRoot
+
+if (-not $S340Include) {
+  Write-Host ""
+  Write-Host "ERROR: -S340Include is required." -ForegroundColor Red
+  Write-Host ""
+  Write-Host "  Clone the bootloader repo, then re-run:"
+  Write-Host "    git clone https://github.com/eMadman/Adafruit_nRF52_Bootloader"
+  Write-Host "    pwsh -File .\install-bsp-s340.ps1 ``"
+  Write-Host "        -S340Include `"<clone-root>\Adafruit_nRF52_Bootloader\lib\softdevice\s340_nrf52_7.0.1\s340_nrf52_7.0.1_API\include`""
+  Write-Host ""
+  exit 1
+}
 
 function Need-Path([string]$p, [string]$what) {
   if (-not (Test-Path -LiteralPath $p)) {

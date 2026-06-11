@@ -12,7 +12,11 @@
 
 set -euo pipefail
 
-BSP_DIR="$HOME/Library/Arduino15/packages/adafruit/hardware/nrf52/1.7.0"
+if [[ "$(uname)" == "Darwin" ]]; then
+  BSP_DIR="$HOME/Library/Arduino15/packages/adafruit/hardware/nrf52/1.7.0"
+else
+  BSP_DIR="$HOME/.arduino15/packages/adafruit/hardware/nrf52/1.7.0"
+fi
 S340_INCLUDE=""
 
 while [[ $# -gt 0 ]]; do
@@ -32,6 +36,18 @@ need_path() {
   fi
 }
 
+if [[ -z "$S340_INCLUDE" ]]; then
+  echo "" >&2
+  echo "ERROR: --s340-include is required." >&2
+  echo "" >&2
+  echo "  Clone the bootloader repo, then re-run:" >&2
+  echo "    git clone https://github.com/eMadman/Adafruit_nRF52_Bootloader" >&2
+  echo "    ./install-bsp-s340.sh \\" >&2
+  echo "        --s340-include <clone-root>/Adafruit_nRF52_Bootloader/lib/softdevice/s340_nrf52_7.0.1/s340_nrf52_7.0.1_API/include" >&2
+  echo "" >&2
+  exit 1
+fi
+
 echo "== bsp-s340 installer =="
 
 need_path "$BSP_DIR"                                    "BSP install dir"
@@ -39,31 +55,6 @@ need_path "$BSP_DIR/boards.txt"                         "boards.txt"
 need_path "$BSP_DIR/cores/nRF5/linker"                  "cores/nRF5/linker"
 need_path "$BSP_DIR/cores/nRF5/nordic/softdevice"       "cores/nRF5/nordic/softdevice"
 need_path "$BSP_DIR/variants"                           "variants"
-
-# Auto-detect S340 headers if not provided
-if [[ -z "$S340_INCLUDE" ]]; then
-  for candidate in \
-      "$HOME/GitHub/Adafruit_nRF52_Bootloader/lib/softdevice/s340_nrf52_7.0.1/s340_nrf52_7.0.1_API/include" \
-      "$HOME/git/Adafruit_nRF52_Bootloader/lib/softdevice/s340_nrf52_7.0.1/s340_nrf52_7.0.1_API/include" \
-      "$HOME/Documents/Arduino/Adafruit_nRF52_Bootloader/lib/softdevice/s340_nrf52_7.0.1/s340_nrf52_7.0.1_API/include"
-  do
-    if [[ -d "$candidate" ]]; then
-      S340_INCLUDE="$candidate"
-      echo "  [auto] S340 headers at $S340_INCLUDE"
-      break
-    fi
-  done
-fi
-
-if [[ -z "$S340_INCLUDE" || ! -d "$S340_INCLUDE" ]]; then
-  echo "" >&2
-  echo "ERROR: S340 7.0.1 API include directory not found." >&2
-  echo "" >&2
-  echo "  Re-run with: --s340-include /path/to/s340_nrf52_7.0.1_API/include" >&2
-  echo "" >&2
-  exit 1
-fi
-
 need_path "$S340_INCLUDE" "S340 7.0.1 include dir"
 
 # 1) S340 SoftDevice headers
